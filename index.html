@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10131a">
+  <title>NightShot</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin:0; min-height:100vh; display:grid; place-items:center; padding:24px;
+      background:radial-gradient(circle at top,#27344b,#10131a 60%); color:#f4f6fb;
+      font:16px system-ui,-apple-system,sans-serif; }
+    main { width:min(100%,460px); background:#1b2230; border:1px solid #3b465b;
+      border-radius:22px; padding:26px; box-shadow:0 18px 60px #0008; }
+    h1 { margin:0 0 8px; letter-spacing:.04em; }
+    p { color:#c6cfdd; line-height:1.5; }
+    video, canvas { width:100%; border-radius:14px; background:#080b10; margin:12px 0; }
+    canvas { display:none; }
+    label { display:flex; gap:10px; align-items:flex-start; margin:16px 0; color:#e5eaf2; }
+    input { margin-top:5px; }
+    button { width:100%; border:0; border-radius:12px; padding:14px; margin-top:10px;
+      background:#7da7ff; color:#101827; font-weight:700; font-size:16px; }
+    button:disabled { opacity:.45; }
+    #status { min-height:24px; font-size:14px; color:#c6cfdd; }
+    .small { font-size:12px; color:#9eabbf; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>NightShot</h1>
+  <p>Ця сторінка може зробити фото на фронтальну камеру та надіслати його власнику сторінки в Telegram. Камера запускається лише після вашої дії та дозволу браузера.</p>
+  <label><input id="consent" type="checkbox"> Я погоджуюся увімкнути камеру, зробити фото та надіслати його власнику сторінки в Telegram.</label>
+  <button id="start" disabled>Увімкнути камеру</button>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <button id="capture" disabled>Зробити й надіслати фото</button>
+  <p id="status" role="status" aria-live="polite"></p>
+  <p class="small">Фото не робиться автоматично. Ви можете не надавати дозвіл або закрити сторінку.</p>
+</main>
+<script>
+const consent = document.getElementById('consent');
+const start = document.getElementById('start');
+const capture = document.getElementById('capture');
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const status = document.getElementById('status');
+let stream = null;
+
+consent.addEventListener('change', () => {
+  start.disabled = !consent.checked;
+  capture.disabled = true;
+});
+
+start.addEventListener('click', async () => {
+  if (!consent.checked) return;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "user" }, audio: false
+    });
+    video.srcObject = stream;
+    capture.disabled = false;
+    status.textContent = 'Камера увімкнена. Натисніть кнопку, якщо хочете зробити й надіслати фото.';
+  } catch (e) {
+    status.textContent = 'Не вдалося відкрити камеру. Перевірте дозвіл у браузері.';
+  }
+});
+
+capture.addEventListener('click', async () => {
+  if (!consent.checked || !stream) return;
+  capture.disabled = true;
+  status.textContent = 'Надсилання фото…';
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.translate(canvas.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.88));
+  if (!blob) {
+    status.textContent = 'Не вдалося створити фото.';
+    capture.disabled = false;
+    return;
+  }
+  const form = new FormData();
+  form.append('photo', blob, 'nightshot.jpg');
+  form.append('consent', 'yes');
+  try {
+    const response = await fetch('/send_photo', { method: 'POST', body: form });
+    const result = await response.json();
+    status.textContent = result.ok ? 'Фото надіслано. Дякуємо!' : (result.error || 'Помилка надсилання.');
+  } catch (e) {
+    status.textContent = 'Помилка з’єднання. Спробуйте ще раз.';
+    capture.disabled = false;
+  } finally {
+    if (stream) stream.getTracks().forEach(track => track.stop());
+    stream = null;
+    video.srcObject = null;
+  }
+});
+
+window.addEventListener('pagehide', () => {
+  if (stream) stream.getTracks().forEach(track => track.stop());
+});
+</script>
+</body>
+</html>
